@@ -242,6 +242,187 @@ class QdrantVectorStoreSpec extends AnyWordSpec with Matchers with BeforeAndAfte
       results.toOption.get.size shouldBe 2
       results.toOption.get.map(_.record.id).toSet shouldBe Set("f1", "f3")
     }
+
+    "retrieve multiple records by IDs with getBatch" in skipIfNoQdrant {
+      val records = (1 to 5).map(i => VectorRecord(s"batch-$i", Array(i.toFloat, (i * 2).toFloat)))
+      store.upsertBatch(records) shouldBe Right(())
+
+      val result = store.getBatch(Seq("batch-1", "batch-3", "batch-5"))
+      result.isRight shouldBe true
+      result.toOption.get.size shouldBe 3
+      result.toOption.get.map(_.id).toSet shouldBe Set("batch-1", "batch-3", "batch-5")
+    }
+
+    "return empty sequence for getBatch with empty IDs" in skipIfNoQdrant {
+      store.getBatch(Seq.empty) shouldBe Right(Seq.empty)
+    }
+
+    "return empty sequence for getBatch with non-existent IDs" in skipIfNoQdrant {
+      val result = store.getBatch(Seq("fake-1", "fake-2", "fake-3"))
+      result.isRight shouldBe true
+      result.toOption.get shouldBe empty
+    }
+
+    "getBatch should handle mix of existent and non-existent IDs" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("exists-1", Array(1.0f)),
+        VectorRecord("exists-2", Array(2.0f))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      val result = store.getBatch(Seq("exists-1", "fake", "exists-2"))
+      result.isRight shouldBe true
+      // Should return only the existing records
+      result.toOption.get.size shouldBe 2
+      result.toOption.get.map(_.id).toSet shouldBe Set("exists-1", "exists-2")
+    }
+
+    "delete records by ID prefix with deleteByPrefix" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("user:1", Array(1.0f)),
+        VectorRecord("user:2", Array(2.0f)),
+        VectorRecord("user:3", Array(3.0f)),
+        VectorRecord("admin:1", Array(4.0f)),
+        VectorRecord("admin:2", Array(5.0f))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      val deleted = store.deleteByPrefix("user:")
+      deleted shouldBe Right(3L)
+
+      store.count() shouldBe Right(2L)
+      store.get("admin:1").toOption.flatten shouldBe defined
+      store.get("admin:2").toOption.flatten shouldBe defined
+      store.get("user:1").toOption.flatten shouldBe None
+    }
+
+    "deleteByPrefix should return 0 when no records match" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("doc-1", Array(1.0f)),
+        VectorRecord("doc-2", Array(2.0f))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      val deleted = store.deleteByPrefix("nonexistent:")
+      deleted shouldBe Right(0L)
+
+      store.count() shouldBe Right(2L)
+    }
+
+    "deleteByPrefix should handle empty prefix" in skipIfNoQdrant {
+      val records = (1 to 3).map(i => VectorRecord(s"id-$i", Array(i.toFloat)))
+      store.upsertBatch(records) shouldBe Right(())
+
+      // Empty prefix matches all records
+      val deleted = store.deleteByPrefix("")
+      deleted shouldBe Right(3L)
+
+      store.count() shouldBe Right(0L)
+    }
+
+    "delete records matching metadata filter with deleteByFilter" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("d1", Array(1.0f), metadata = Map("status" -> "draft", "type" -> "post")),
+        VectorRecord("d2", Array(2.0f), metadata = Map("status" -> "draft", "type" -> "post")),
+        VectorRecord("d3", Array(3.0f), metadata = Map("status" -> "draft", "type" -> "page")),
+        VectorRecord("p1", Array(4.0f), metadata = Map("status" -> "published", "type" -> "post")),
+        VectorRecord("p2", Array(5.0f), metadata = Map("status" -> "published", "type" -> "post"))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      // Delete all draft posts
+      val filter  = MetadataFilter.Equals("status", "draft").and(MetadataFilter.Equals("type", "post"))
+      val deleted = store.deleteByFilter(filter)
+      deleted shouldBe Right(2L)
+
+      store.count() shouldBe Right(3L)
+      // Should keep draft page and published posts
+      store.get("d3").toOption.flatten shouldBe defined
+      store.get("p1").toOption.flatten shouldBe defined
+      store.get("p2").toOption.flatten shouldBe defined
+    }
+
+    "deleteByFilter should return 0 when no records match filter" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("r1", Array(1.0f), metadata = Map("color" -> "red")),
+        VectorRecord("r2", Array(2.0f), metadata = Map("color" -> "blue"))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      val filter  = MetadataFilter.Equals("color", "green")
+      val deleted = store.deleteByFilter(filter)
+      deleted shouldBe Right(0L)
+
+      store.count() shouldBe Right(2L)
+    }
+
+    "deleteByFilter should work with complex filters" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("r1", Array(1.0f), metadata = Map("priority" -> "high", "done" -> "false")),
+        VectorRecord("r2", Array(2.0f), metadata = Map("priority" -> "high", "done" -> "true")),
+        VectorRecord("r3", Array(3.0f), metadata = Map("priority" -> "low", "done" -> "false")),
+        VectorRecord("r4", Array(4.0f), metadata = Map("priority" -> "low", "done" -> "true"))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      // Delete all completed items (done=true) OR low priority items
+      val filter  = MetadataFilter.Equals("done", "true").or(MetadataFilter.Equals("priority", "low"))
+      val deleted = store.deleteByFilter(filter)
+
+      // Should delete r2 (high+done), r3 (low+not done), r4 (low+done)
+      deleted.toOption.get should be >= 3L
+      store.count().toOption.get should be <= 1L
+    }
+
+    "count records with metadata filter" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("c1", Array(1.0f), metadata = Map("active" -> "true", "category" -> "A")),
+        VectorRecord("c2", Array(2.0f), metadata = Map("active" -> "true", "category" -> "B")),
+        VectorRecord("c3", Array(3.0f), metadata = Map("active" -> "false", "category" -> "A")),
+        VectorRecord("c4", Array(4.0f), metadata = Map("active" -> "false", "category" -> "B"))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      // Count active records
+      val activeFilter = MetadataFilter.Equals("active", "true")
+      store.count(Some(activeFilter)) shouldBe Right(2L)
+
+      // Count category A records
+      val categoryFilter = MetadataFilter.Equals("category", "A")
+      store.count(Some(categoryFilter)) shouldBe Right(2L)
+
+      // Count active category A records
+      val combinedFilter = activeFilter.and(categoryFilter)
+      store.count(Some(combinedFilter)) shouldBe Right(1L)
+
+      // Count all records
+      store.count(None) shouldBe Right(4L)
+    }
+
+    "count should return 0 when no records match filter" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("r1", Array(1.0f), metadata = Map("tag" -> "alpha")),
+        VectorRecord("r2", Array(2.0f), metadata = Map("tag" -> "beta"))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      val filter = MetadataFilter.Equals("tag", "gamma")
+      store.count(Some(filter)) shouldBe Right(0L)
+    }
+
+    "count should work with OR filters" in skipIfNoQdrant {
+      val records = Seq(
+        VectorRecord("r1", Array(1.0f), metadata = Map("env" -> "dev")),
+        VectorRecord("r2", Array(2.0f), metadata = Map("env" -> "staging")),
+        VectorRecord("r3", Array(3.0f), metadata = Map("env" -> "prod")),
+        VectorRecord("r4", Array(4.0f), metadata = Map("env" -> "dev"))
+      )
+      store.upsertBatch(records) shouldBe Right(())
+
+      // Count dev OR staging environments
+      val filter = MetadataFilter.Equals("env", "dev").or(MetadataFilter.Equals("env", "staging"))
+      store.count(Some(filter)) shouldBe Right(3L)
+    }
   }
 
   "QdrantVectorStore factory" should {

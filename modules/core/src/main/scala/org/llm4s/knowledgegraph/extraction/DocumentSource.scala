@@ -67,14 +67,6 @@ case class SourceTrackedGraph(
 ) {
 
   /**
-   * Adds a document's extracted graph to this tracked graph, merging nodes/edges
-   * and recording provenance.
-   *
-   * @param docGraph The graph extracted from the document
-   * @param source The document source metadata
-   * @return A new SourceTrackedGraph with the document incorporated
-   */
-  /**
    * Remaps all node IDs in a graph by prefixing them with a namespace string.
    *
    * LLM-generated node IDs are arbitrary (often "1", "2", etc.) and will collide

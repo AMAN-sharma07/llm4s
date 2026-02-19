@@ -232,6 +232,14 @@ Respond in strict JSON format:
 ${pairs.mkString("\n\n")}"""
   }
 
+  /**
+   * Parses the LLM disambiguation response and applies confirmed merges.
+   *
+   * Graceful degradation: if the LLM response cannot be parsed (malformed JSON, unexpected
+   * structure, etc.) a warning is logged and the pre-disambiguation graph is returned as
+   * `Right`. Callers cannot distinguish a successful no-op from a parse failure; use
+   * log output to detect issues in production.
+   */
   private def parseDisambiguationResponse(
     jsonStr: String,
     candidates: List[(Node, Node)],

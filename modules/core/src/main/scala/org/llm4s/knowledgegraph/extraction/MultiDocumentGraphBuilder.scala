@@ -70,9 +70,12 @@ class MultiDocumentGraphBuilder(
    * Runs the full pipeline per document, merges all results, then applies entity linking.
    * Supports incremental building via the `existingGraph` parameter.
    *
+   * Fails fast: if any document's extraction fails, the method returns immediately with
+   * that error and subsequent documents are not processed.
+   *
    * @param documents Sequence of (text, source) pairs to extract from
    * @param existingGraph Optional existing graph to build upon incrementally
-   * @return A SourceTrackedGraph combining all documents
+   * @return A SourceTrackedGraph combining all documents, or the first extraction error
    */
   def extractDocuments(
     documents: Seq[(String, DocumentSource)],

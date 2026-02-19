@@ -115,15 +115,12 @@ class AssistantAgentSpec extends AnyFlatSpec with Matchers {
     }
   }
 
-  it should "return Left when agent initialization fails (None branch)" in {
+  it should "succeed on initialization with a broken LLM client (no LLM call during init)" in {
     val state        = emptySessionState()
     val brokenClient = failingClient("init failed")
-    // failingClient won't be called by initializeSafe (no LLM call there),
-    // but we still construct a broken agent to verify error wrapping works if it did fail.
-    // Directly test the wrapping by constructing a state that triggers initializeSafe with a null query.
-    val agent = assistantAgent(brokenClient)
-
-    // initializeSafe succeeds even with a broken LLM (no LLM call during init)
+    // initializeSafe does not call the LLM — it only builds the initial AgentState
+    // from the query and tool registry. A broken client therefore does not cause init to fail.
+    val agent  = assistantAgent(brokenClient)
     val result = agent.addUserMessage("query", state)
     result.isRight shouldBe true
   }

@@ -34,81 +34,69 @@ object BuiltinToolsAgentExample {
   def main(args: Array[String]): Unit = {
     logger.info("=== Built-in Tools Agent Example ===\n")
 
-    // Create LLM client from typed configuration
-    val clientResult = for {
+    val homeDir = System.getProperty("user.home")
+    val fileConfig = FileConfig(
+      allowedPaths = Some(Seq(homeDir, "/tmp")),
+      blockedPaths = Seq("/etc", "/var", "/sys", "/proc")
+    )
+
+    val result = for {
       providerCfg <- Llm4sConfig.provider()
       client      <- LLMConnect.getClient(providerCfg)
-    } yield client
+      tools <- BuiltinTools.customSafe(
+        fileConfig = Some(fileConfig),
+        shellConfig = Some(ShellConfig.readOnly())
+      )
+    } yield (client, tools)
 
-    clientResult match {
+    result match {
       case Left(error) =>
-        logger.error("Failed to create LLM client: {}", error)
+        logger.error("Failed to initialise agent: {}", error.formatted)
         logger.error("Make sure LLM_MODEL and appropriate API key are set")
-        return
 
-      case Right(client) =>
+      case Right((client, tools)) =>
         logger.info("LLM client created successfully")
+        logger.info("Available tools: {}", tools.map(_.name).mkString(", "))
 
-        // Configure built-in tools for the agent
-        val homeDir = System.getProperty("user.home")
-        val fileConfig = FileConfig(
-          allowedPaths = Some(Seq(homeDir, "/tmp")),
-          blockedPaths = Seq("/etc", "/var", "/sys", "/proc")
+        val registry = new ToolRegistry(tools)
+        val agent    = new Agent(client)
+
+        // Example queries that use different built-in tools
+        val queries = Seq(
+          "What is today's date and what day of the week is it?",
+          "Calculate 15% of 850 and also compute the square root of 144",
+          s"List the files in $homeDir and tell me how many there are",
+          "Generate 3 UUIDs for me",
+          "What is the current working directory?"
         )
 
-        val toolsResult = BuiltinTools.customSafe(
-          fileConfig = Some(fileConfig),
-          shellConfig = Some(ShellConfig.readOnly())
-        )
+        for (query <- queries) {
+          logger.info("\n--- Query: {} ---", query)
 
-        toolsResult match {
-          case Left(err) =>
-            logger.error("Failed to load tools: {}", err.formatted)
-            return
+          agent.run(query, registry) match {
+            case Left(error) =>
+              logger.error("Agent error: {}", error.formatted)
 
-          case Right(tools) =>
-            logger.info("Available tools: {}", tools.map(_.name).mkString(", "))
+            case Right(state) =>
+              // Get the final assistant response from the conversation
+              val lastAssistantMsg = state.conversation.messages
+                .filter(_.role == org.llm4s.llmconnect.model.MessageRole.Assistant)
+                .lastOption
+                .map(_.content)
+                .getOrElse("No response")
 
-            val registry = new ToolRegistry(tools)
-            val agent    = new Agent(client)
+              // Count tool messages to see which tools were used
+              val toolMsgCount = state.conversation.messages.count(
+                _.role == org.llm4s.llmconnect.model.MessageRole.Tool
+              )
 
-            // Example queries that use different built-in tools
-            val queries = Seq(
-              "What is today's date and what day of the week is it?",
-              "Calculate 15% of 850 and also compute the square root of 144",
-              s"List the files in $homeDir and tell me how many there are",
-              "Generate 3 UUIDs for me",
-              "What is the current working directory?"
-            )
-
-            for (query <- queries) {
-              logger.info("\n--- Query: {} ---", query)
-
-              agent.run(query, registry) match {
-                case Left(error) =>
-                  logger.error("Agent error: {}", error.formatted)
-
-                case Right(state) =>
-                  // Get the final assistant response from the conversation
-                  val lastAssistantMsg = state.conversation.messages
-                    .filter(_.role == org.llm4s.llmconnect.model.MessageRole.Assistant)
-                    .lastOption
-                    .map(_.content)
-                    .getOrElse("No response")
-
-                  // Count tool messages to see which tools were used
-                  val toolMsgCount = state.conversation.messages.count(
-                    _.role == org.llm4s.llmconnect.model.MessageRole.Tool
-                  )
-
-                  logger.info("Agent response: {}", lastAssistantMsg)
-                  logger.info("Tool calls made: {}", toolMsgCount)
-                  logger.info("Status: {}", state.status)
-              }
-            }
-
-            logger.info("\n=== Example Complete ===")
+              logger.info("Agent response: {}", lastAssistantMsg)
+              logger.info("Tool calls made: {}", toolMsgCount)
+              logger.info("Status: {}", state.status)
+          }
         }
+
+        logger.info("\n=== Example Complete ===")
     }
   }
 }

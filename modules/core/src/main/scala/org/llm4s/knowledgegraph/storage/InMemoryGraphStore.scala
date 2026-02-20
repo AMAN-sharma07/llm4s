@@ -4,6 +4,7 @@ import org.llm4s.knowledgegraph.{ Edge, Graph, Node }
 import org.llm4s.types.Result
 import org.llm4s.error.ProcessingError
 import java.util.concurrent.atomic.AtomicReference
+import scala.annotation.tailrec
 
 /**
  * In-memory implementation of GraphStore using atomic references for thread-safe updates.
@@ -183,23 +184,15 @@ class InMemoryGraphStore(initialGraph: Graph = Graph.empty) extends GraphStore {
    * @param fn Function to apply to current graph state
    * @return Updated graph or error
    */
+  @tailrec
   private def atomicUpdate(fn: Graph => Result[Graph]): Result[Graph] = {
-    var success               = false
-    var updated: Graph        = graphRef.get()
-    var result: Result[Graph] = Right(updated)
-
-    while (!success && result.isRight) {
-      val current = graphRef.get()
-      result = fn(current)
-      result match {
-        case Left(_) =>
-        case Right(next) =>
-          updated = next
-          success = graphRef.compareAndSet(current, updated)
-      }
+    val current = graphRef.get()
+    fn(current) match {
+      case Left(err) => Left(err)
+      case Right(next) =>
+        if (graphRef.compareAndSet(current, next)) Right(next)
+        else atomicUpdate(fn) // lost the CAS race — retry with fresh snapshot
     }
-
-    if (success) Right(updated) else result
   }
 
   /**

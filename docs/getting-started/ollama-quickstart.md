@@ -163,39 +163,30 @@ Create `HelloOllama.scala`:
 
 ```scala
 import org.llm4s.config.Llm4sConfig
-import org.llm4s.llmconnect.{LLMClient, LLMConnect}
+import org.llm4s.llmconnect.LLMConnect
 import org.llm4s.llmconnect.model._
 
-// 1. Core Logic: Depends only on the injected client, not configuration
-class HelloOllama(client: LLMClient) {
-  def run(): Unit = {
-    // Create a conversation with system and user messages
-    val conversation = Conversation(Seq(
-      SystemMessage("You are a helpful AI assistant."),
-      UserMessage("Explain what Scala is in one sentence.")
-    ))
+object HelloOllama extends App {
+  // Create a conversation with system and user messages
+  val conversation = Conversation(Seq(
+    SystemMessage("You are a helpful AI assistant."),
+    UserMessage("Explain what Scala is in one sentence.")
+  ))
 
-    // Make the request using the injected client
-    val result = client.complete(conversation)
-
-    result match {
-      case Right(completion) =>
-        println(s"Response from ${completion.model}:")
-        println(completion.message.content)
-      case Left(error) =>
-        Console.err.println(s"Error: ${error.formatted}")
-    }
-  }
-}
-
-// 2. Configuration Boundary: The application entry point
-object HelloOllamaMain extends App {
-  val startup = for {
+  // Load config and make the request
+  val result = for {
     providerConfig <- Llm4sConfig.provider()
     client <- LLMConnect.getClient(providerConfig)
-  } yield new HelloOllama(client).run()
+    completion <- client.complete(conversation)
+  } yield completion
 
-  startup.left.foreach(err => Console.err.println(s"Startup Error: $err"))
+  result match {
+    case Right(completion) =>
+      println(s"Response from ${completion.model}:")
+      println(completion.message.content)
+    case Left(error) =>
+      Console.err.println(s"Error: ${error.formatted}")
+  }
 }
 ```
 
@@ -240,29 +231,32 @@ Then run your program again without code changes!
 Get real-time token streaming (like ChatGPT):
 
 ```scala
-import org.llm4s.llmconnect.LLMClient
+import org.llm4s.config.Llm4sConfig
+import org.llm4s.llmconnect.LLMConnect
 import org.llm4s.llmconnect.model._
 
-class StreamingOllama(client: LLMClient) {
-  def run(): Unit = {
-    val conversation = Conversation(Seq(
-      SystemMessage("You are a concise assistant."),
-      UserMessage("Write a haiku about Scala programming.")
-    ))
+object StreamingOllama extends App {
+  val conversation = Conversation(Seq(
+    SystemMessage("You are a concise assistant."),
+    UserMessage("Write a haiku about Scala programming.")
+  ))
 
-    val result = client.streamComplete(
+  val result = for {
+    providerConfig <- Llm4sConfig.provider()
+    client <- LLMConnect.getClient(providerConfig)
+    completion <- client.streamComplete(
       conversation,
       CompletionOptions(),
       chunk => chunk.content.foreach(print)  // Print tokens as they arrive
     )
+  } yield completion
 
-    result match {
-      case Right(completion) =>
-        println("\n--- Streaming complete! ---")
-        println(s"Total content: ${completion.message.content}")
-      case Left(error) =>
-        Console.err.println(s"Error: ${error.formatted}")
-    }
+  result match {
+    case Right(completion) =>
+      println("\n--- Streaming complete! ---")
+      println(s"Total content: ${completion.message.content}")
+    case Left(error) =>
+      Console.err.println(s"Error: ${error.formatted}")
   }
 }
 ```
@@ -275,46 +269,49 @@ Ollama supports tool calling (function calling) with compatible models:
 
 ```scala
 import org.llm4s.agent.Agent
-import org.llm4s.llmconnect.LLMClient
+import org.llm4s.config.Llm4sConfig
+import org.llm4s.llmconnect.LLMConnect
 import org.llm4s.toolapi._
 import upickle.default._
 
-class OllamaTools(client: LLMClient) {
+object OllamaTools extends App {
   // Define result type
   case class WeatherResult(forecast: String)
   implicit val weatherResultRW: ReadWriter[WeatherResult] = macroRW
 
-  def run(): Unit = {
-    // Define a weather tool with proper schema
-    val weatherSchema = Schema
-      .`object`[Map[String, Any]]("Weather parameters")
-      .withProperty(
-        Schema.property("location", Schema.string("City or location name"))
-      )
+  // Define a weather tool with proper schema
+  val weatherSchema = Schema
+    .`object`[Map[String, Any]]("Weather parameters")
+    .withProperty(
+      Schema.property("location", Schema.string("City or location name"))
+    )
 
-    val getWeather = ToolBuilder[Map[String, Any], WeatherResult](
-      "get_weather",
-      "Get the current weather in a location",
-      weatherSchema
-    ).withHandler { extractor =>
-      extractor.getString("location").map { location =>
-        // Mock implementation
-        WeatherResult(s"Weather in $location: Sunny, 72F")
-      }
-    }.build()
-
-    val tools = new ToolRegistry(Seq(getWeather))
-    val agent = new Agent(client)
-    
-    val result = agent.run("What's the weather in San Francisco?", tools)
-
-    result match {
-      case Right(state) =>
-        println("Final response:")
-        println(state.conversation.messages.last.content)
-      case Left(error) =>
-        Console.err.println(s"Error: ${error.formatted}")
+  val getWeather = ToolBuilder[Map[String, Any], WeatherResult](
+    "get_weather",
+    "Get the current weather in a location",
+    weatherSchema
+  ).withHandler { extractor =>
+    extractor.getString("location").map { location =>
+      // Mock implementation
+      WeatherResult(s"Weather in $location: Sunny, 72F")
     }
+  }.build()
+
+  val tools = new ToolRegistry(Seq(getWeather))
+
+  val result = for {
+    providerConfig <- Llm4sConfig.provider()
+    client <- LLMConnect.getClient(providerConfig)
+    agent = new Agent(client)
+    state <- agent.run("What's the weather in San Francisco?", tools)
+  } yield state
+
+  result match {
+    case Right(state) =>
+      println("Final response:")
+      println(state.conversation.messages.last.content)
+    case Left(error) =>
+      Console.err.println(s"Error: ${error.formatted}")
   }
 }
 ```

@@ -190,6 +190,37 @@ class InMemoryDatasetStorePropertySpec extends AnyFlatSpec with Matchers with Sc
     }
   }
 
+  // ---- unknown dataset ID: List.empty fallbacks ----
+
+  "InMemoryDatasetStore.getExamples" should "return empty list for an unknown dataset ID" in {
+    forAll(genNonEmptyString) { id =>
+      val store = freshStore()
+      store.getExamples(DatasetId(id), ExampleSelector.All) shouldBe empty
+    }
+  }
+
+  "InMemoryDatasetStore.addExample" should "use List.empty as the base when the dataset ID is not registered" in {
+    forAll(genNonEmptyString) { id =>
+      val store     = freshStore()
+      val datasetId = DatasetId(id)
+      store.addExample(datasetId, ujson.Str("v"))
+      // The List.empty fallback was used; the example is now in the examples map
+      store.getExamples(datasetId, ExampleSelector.All) should have size 1
+    }
+  }
+
+  "InMemoryDatasetStore.createSnapshot" should "create an empty snapshot for an unknown dataset ID" in {
+    forAll(genNonEmptyString) { id =>
+      val store     = freshStore()
+      val datasetId = DatasetId(id)
+      val snapId    = store.createSnapshot(datasetId)
+      val snap      = store.getSnapshot(snapId)
+      snap shouldBe defined
+      snap.get.examples shouldBe empty
+      snap.get.datasetId shouldBe datasetId
+    }
+  }
+
   // ---- importJsonl count invariant ----
 
   "InMemoryDatasetStore.importJsonl" should "always satisfy: imported + skipped == total lines" in {

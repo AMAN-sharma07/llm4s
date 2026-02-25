@@ -46,12 +46,24 @@ class DatasetModelPropertySpec extends AnyFlatSpec with Matchers with ScalaCheck
     forAll(genId)(s => DatasetId(s).value shouldBe s)
   }
 
+  it should "return the wrapped value from toString" in {
+    forAll(genId)(s => DatasetId(s).toString shouldBe s)
+  }
+
   "ExampleId" should "preserve any wrapped string value exactly" in {
     forAll(genId)(s => ExampleId(s).value shouldBe s)
   }
 
+  it should "return the wrapped value from toString" in {
+    forAll(genId)(s => ExampleId(s).toString shouldBe s)
+  }
+
   "SnapshotId" should "preserve any wrapped string value exactly" in {
     forAll(genId)(s => SnapshotId(s).value shouldBe s)
+  }
+
+  it should "return the wrapped value from toString" in {
+    forAll(genId)(s => SnapshotId(s).toString shouldBe s)
   }
 
   // ---- ID generate: uniqueness ----

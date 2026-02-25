@@ -63,6 +63,70 @@ class JsonlCodecPropertySpec extends AnyFlatSpec with Matchers with ScalaCheckPr
     }
   }
 
+  // ---- decode: optional-field fallbacks (Set.empty / Map.empty) ----
+
+  "JsonlCodec.decode" should "return Some with empty tags when the 'tags' field is absent" in {
+    forAll(genNonEmptyString, genRoundTripValue) { (id, input) =>
+      val line = ujson.write(
+        ujson.Obj("id" -> ujson.Str(id), "input" -> input, "referenceOutput" -> ujson.Null)
+        // 'tags' deliberately omitted
+      )
+      val decoded = JsonlCodec.decode(line)
+      decoded shouldBe defined
+      decoded.get.tags shouldBe empty
+    }
+  }
+
+  it should "return Some with empty tags when the 'tags' field is not a JSON array" in {
+    forAll(genNonEmptyString, genRoundTripValue) { (id, input) =>
+      val line = ujson.write(
+        ujson.Obj(
+          "id"              -> ujson.Str(id),
+          "input"           -> input,
+          "referenceOutput" -> ujson.Null,
+          "tags"            -> ujson.Str("not-an-array")
+        )
+      )
+      val decoded = JsonlCodec.decode(line)
+      decoded shouldBe defined
+      decoded.get.tags shouldBe empty
+    }
+  }
+
+  it should "return Some with empty metadata when the 'metadata' field is absent" in {
+    forAll(genNonEmptyString, genRoundTripValue) { (id, input) =>
+      val line = ujson.write(
+        ujson.Obj(
+          "id"              -> ujson.Str(id),
+          "input"           -> input,
+          "referenceOutput" -> ujson.Null,
+          "tags"            -> ujson.Arr()
+          // 'metadata' deliberately omitted
+        )
+      )
+      val decoded = JsonlCodec.decode(line)
+      decoded shouldBe defined
+      decoded.get.metadata shouldBe empty
+    }
+  }
+
+  it should "return Some with empty metadata when the 'metadata' field is not a JSON object" in {
+    forAll(genNonEmptyString, genRoundTripValue) { (id, input) =>
+      val line = ujson.write(
+        ujson.Obj(
+          "id"              -> ujson.Str(id),
+          "input"           -> input,
+          "referenceOutput" -> ujson.Null,
+          "tags"            -> ujson.Arr(),
+          "metadata"        -> ujson.Str("not-an-object")
+        )
+      )
+      val decoded = JsonlCodec.decode(line)
+      decoded shouldBe defined
+      decoded.get.metadata shouldBe empty
+    }
+  }
+
   // ---- decode: failure cases ----
 
   "JsonlCodec.decode" should "return None for any non-JSON string" in {

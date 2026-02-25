@@ -80,6 +80,44 @@ class JsonSchemaValidatorPropertySpec extends AnyFlatSpec with Matchers with Sca
     }
   }
 
+  // ---- jsonTypeName: all JSON value types appear in error messages ----
+
+  "JsonSchemaValidator" should "report 'object' in the error message when the actual value is a JSON object" in {
+    forAll(genNonEmptyString) { key =>
+      val value  = ujson.Obj(key -> ujson.Str("v"))
+      val schema = ujson.Obj("type" -> ujson.Str("string"))
+      val errors = JsonSchemaValidator.validate(value, schema).swap.getOrElse(Nil)
+      errors should have size 1
+      errors.head should include("object")
+    }
+  }
+
+  it should "report 'array' in the error message when the actual value is a JSON array" in {
+    val value  = ujson.Arr(ujson.Str("a"))
+    val schema = ujson.Obj("type" -> ujson.Str("string"))
+    val errors = JsonSchemaValidator.validate(value, schema).swap.getOrElse(Nil)
+    errors should have size 1
+    errors.head should include("array")
+  }
+
+  it should "report 'boolean' in the error message when the actual value is a JSON boolean" in {
+    forAll(Gen.oneOf(true, false)) { b =>
+      val value  = ujson.Bool(b)
+      val schema = ujson.Obj("type" -> ujson.Str("string"))
+      val errors = JsonSchemaValidator.validate(value, schema).swap.getOrElse(Nil)
+      errors should have size 1
+      errors.head should include("boolean")
+    }
+  }
+
+  it should "report 'null' in the error message when the actual value is JSON null" in {
+    val value  = ujson.Null
+    val schema = ujson.Obj("type" -> ujson.Str("string"))
+    val errors = JsonSchemaValidator.validate(value, schema).swap.getOrElse(Nil)
+    errors should have size 1
+    errors.head should include("null")
+  }
+
   // ---- required keyword ----
 
   "JsonSchemaValidator required keyword" should "return Right when all required keys are present in the object" in {
@@ -107,6 +145,24 @@ class JsonSchemaValidatorPropertySpec extends AnyFlatSpec with Matchers with Sca
       val schema = ujson.Obj("required" -> ujson.Arr.from(missingKeys.map(ujson.Str.apply)))
       val errors = JsonSchemaValidator.validate(value, schema).swap.getOrElse(Nil)
       missingKeys.foreach(key => errors.exists(_.contains(key)) shouldBe true)
+    }
+  }
+
+  it should "prefix missing-field errors with the parent property path when validating nested objects" in {
+    forAll(genNonEmptyString, genNonEmptyString) { (propName, requiredField) =>
+      // schema: { properties: { propName: { required: [requiredField] } } }
+      // value:  { propName: {} }  ← empty nested object; requiredField is missing
+      val value = ujson.Obj(propName -> ujson.Obj())
+      val schema = ujson.Obj(
+        "properties" -> ujson.Obj(
+          propName -> ujson.Obj("required" -> ujson.Arr(ujson.Str(requiredField)))
+        )
+      )
+      val result = JsonSchemaValidator.validate(value, schema)
+      result.isLeft shouldBe true
+      val errors = result.swap.getOrElse(Nil)
+      // Each error message must start with the parent property name prefix
+      errors.foreach(err => err should startWith(propName))
     }
   }
 

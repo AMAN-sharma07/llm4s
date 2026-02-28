@@ -681,7 +681,7 @@ Interested in contributing? Start here:
 
 Want to be part of developing this and interact with other developers? Join our Discord community!
 
-Please review our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our community guidelines and expectations.
+Please review our [Code of Conduct](https://github.com/llm4s/llm4s/blob/main/CODE_OF_CONDUCT.md) to understand our community guidelines and expectations.
 
  **LLM4S Discord:** https://lnkd.in/eb4ZFdtG
 

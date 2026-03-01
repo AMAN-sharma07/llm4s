@@ -173,15 +173,15 @@ For streaming responses:
 
 The project provides a handful of sbt commands that contributors use frequently. The table below summarizes the most common ones and when to use them.
 
-| Task                  | Command                     | When to use it                                                 |
-|-----------------------|-----------------------------|----------------------------------------------------------------|
-| Compile(current ver)  | `sbt compile`               | Quick compile during development or before starting tests      |
-| Cross‑compile         | `sbt +compile`              | Verify code compiles against *both* supported Scala versions   |
-| Run tests for a module| `sbt core/test`             | Execute tests only in a specific sub‑module, e.g. `core`       |
-| Run all tests         | `sbt test`                  | Default; runs tests for the current Scala version              |
-| Cross‑version tests   | `sbt +test`                 | Ensure tests pass under both Scala 2.13 and Scala 3            |
-| Full CI‑like pipeline | `sbt buildAll`              | Compiles, tests, and packages every module across versions     |
-| Format code           | `sbt scalafmtAll`           | Apply project‑wide formatting (required before PRs)            |
+| Task                       | Command                     | When to use it                                                 |
+|----------------------------|-----------------------------|----------------------------------------------------------------|
+| Compile (current version)  | `sbt compile`               | Quick compile during development or before starting tests      |
+| Cross‑compile              | `sbt +compile`              | Verify code compiles against *both* supported Scala versions   |
+| Run tests for a module     | `sbt core/test`             | Execute tests only in a specific sub‑module, e.g. `core`       |
+| Run all tests              | `sbt test`                  | Default; runs tests for the current Scala version              |
+| Cross‑version tests        | `sbt +test`                 | Ensure tests pass under both Scala 2.13 and Scala 3            |
+| Full CI‑like pipeline      | `sbt buildAll`              | Compiles, tests, and packages every module across versions     |
+| Format code                | `sbt scalafmtAll`           | Apply project‑wide formatting (required before PRs)            |
 
 ### Using the table
 

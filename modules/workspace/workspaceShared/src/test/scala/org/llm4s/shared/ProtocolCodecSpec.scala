@@ -65,6 +65,8 @@ class ProtocolCodecSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "decode ModifyFileCommand with operations" in {
+    // the numeric values here are arbitrary; the tool semantics changed to
+    // 0-indexed earlier but serialization tests don't depend on that detail
     val command = ModifyFileCommand(
       "mod-1",
       "/file.txt",

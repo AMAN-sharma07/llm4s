@@ -36,8 +36,8 @@ trait WorkspaceAgentInterface {
    * Read the content of a file, with options to read specific line ranges.
    *
    * @param path Path to file
-   * @param startLine Optional start line (1-indexed)
-   * @param endLine Optional end line (1-indexed)
+   * @param startLine Optional start line (0-indexed)
+   * @param endLine Optional end line (0-indexed)
    * @return Response with file content and metadata
    */
   def readFile(

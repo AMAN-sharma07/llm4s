@@ -77,8 +77,8 @@ exploreFiles({
 ```typescript
 {
   path: string;               // Path to file
-  startLine?: number;         // Optional start line (1-indexed)
-  endLine?: number;           // Optional end line (1-indexed)
+  startLine?: number;         // Optional start line (0-indexed)
+  endLine?: number;           // Optional end line (0-indexed)
 }
 ```
 
@@ -103,7 +103,7 @@ exploreFiles({
 // Read entire file (subject to size limits)
 readFile({ path: "src/app.js" })
 
-// Read specific lines from a file
+// Read specific lines from a file (0-indexed range)
 readFile({ path: "src/app.js", startLine: 10, endLine: 20 })
 ```
 
@@ -158,19 +158,19 @@ writeFile({
   operations: Array<          // List of operations to perform
     | { 
         type: "replace";      // Replace lines in the file
-        startLine: number;    // Start line to replace (1-indexed)
-        endLine: number;      // End line to replace (1-indexed)
+        startLine: number;    // Start line to replace (0-indexed)
+        endLine: number;      // End line to replace (0-indexed)
         newContent: string;   // New content to insert
       }
     | { 
         type: "insert";       // Insert after a specific line
-        afterLine: number;    // Line after which to insert (1-indexed)
+        afterLine: number;    // Line after which to insert (0-indexed)
         newContent: string;   // Content to insert
       }
     | { 
         type: "delete";       // Delete lines from the file
-        startLine: number;    // Start line to delete (1-indexed)
-        endLine: number;      // End line to delete (1-indexed)
+        startLine: number;    // Start line to delete (0-indexed)
+        endLine: number;      // End line to delete (0-indexed)
       }
     | { 
         type: "regexReplace"; // Replace using regex
@@ -192,7 +192,7 @@ writeFile({
 
 **Usage Examples**:
 ```
-// Replace lines 5-10 with new content
+// Replace lines 5-10 with new content (0-indexed)
 modifyFile({
   path: "src/components/Button.jsx",
   operations: [
@@ -205,7 +205,7 @@ modifyFile({
   ]
 })
 
-// Replace all instances of a deprecated API
+// Replace all instances of a deprecated API (search results report 0-index lines)
 modifyFile({
   path: "src/api/client.js",
   operations: [
@@ -240,7 +240,7 @@ modifyFile({
 {
   matches: Array<{
     path: string;             // Path to file with match
-    line: number;             // Line number of match (1-indexed)
+    line: number;             // Line number of match (0-indexed)
     matchText: string;        // Matched text
     contextBefore: string[];  // Lines before match
     contextAfter: string[];   // Lines after match

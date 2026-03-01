@@ -178,6 +178,11 @@ object FileOperation {
   )
 }
 
+/**
+ * Replace lines in a file.  `startLine`/`endLine` are 0-indexed inclusive
+ * line numbers.  The existing lines in the range are removed and `newContent`
+ * is inserted in their place.
+ */
 case class ReplaceOperation(
   `type`: String = "replace",
   startLine: Int,
@@ -189,6 +194,11 @@ object ReplaceOperation {
   implicit val rw: ReadWriter[ReplaceOperation] = macroRW
 }
 
+/**
+ * Insert content into a file. `afterLine` is a 0-indexed line number; the
+ * insert happens immediately *after* this line.  Use -1 to insert at the
+ * beginning of the file.
+ */
 case class InsertOperation(
   `type`: String = "insert",
   afterLine: Int,
@@ -199,6 +209,10 @@ object InsertOperation {
   implicit val rw: ReadWriter[InsertOperation] = macroRW
 }
 
+/**
+ * Delete a range of lines. `startLine`/`endLine` are 0-indexed inclusive
+ * bounds.  Lines in the specified range are removed from the file.
+ */
 case class DeleteOperation(
   `type`: String = "delete",
   startLine: Int,

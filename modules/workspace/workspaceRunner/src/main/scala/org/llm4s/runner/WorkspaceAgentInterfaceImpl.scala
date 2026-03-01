@@ -163,6 +163,11 @@ class WorkspaceAgentInterfaceImpl(
 
   /**
    * Read the content of a file, with options to read specific line ranges.
+   *
+   * "startLine" and "endLine" parameters are **0-indexed** and inclusive.
+   * The implementation will clamp out-of-range values and convert to a Scala
+   * slice (end-exclusive) before slicing the file content.  For example,
+   * startLine = 0, endLine = 0 returns the first line.
    */
   override def readFile(
     path: String,
@@ -202,8 +207,19 @@ class WorkspaceAgentInterfaceImpl(
       val lines      = source.getLines().toList
       val totalLines = lines.size
 
-      val start = startLine.map(l => math.max(1, math.min(l, totalLines)) - 1).getOrElse(0)
-      val end   = endLine.map(l => math.max(start + 1, math.min(l, totalLines))).getOrElse(totalLines)
+      // convert 0-indexed inclusive user values into slice indices
+      // start: clamp between 0 and totalLines-1
+      val start = startLine
+        .map(l => math.max(0, math.min(l, totalLines - 1)))
+        .getOrElse(0)
+      // endLine is inclusive index; convert to exclusive slice bound
+      val end = endLine
+        .map(l => {
+          // ensure end is at least start and at most last index
+          val inclusive = math.max(start, math.min(l, totalLines - 1))
+          inclusive + 1
+        })
+        .getOrElse(totalLines)
 
       val selectedLines = lines.slice(start, end)
       val content       = selectedLines.mkString("\n")
@@ -296,6 +312,12 @@ class WorkspaceAgentInterfaceImpl(
 
   /**
    * Perform targeted modifications to a file without rewriting the entire content.
+   *
+   * All line-based parameters are 0-indexed.  Replace/Delete operations use
+   * inclusive start/end indexes; Insert operations take an "afterLine" index
+   * and place new content immediately after that line (use -1 to insert at
+   * the beginning).  Invalid ranges are clamped or cause an exception when
+   * start > end.
    */
   override def modifyFile(
     path: String,
@@ -370,10 +392,11 @@ class WorkspaceAgentInterfaceImpl(
     operations.foldLeft(lines) { (currentLines, operation) =>
       operation match {
         case ReplaceOperation(_, startLine, endLine, newContent) =>
-          val start = math.max(1, startLine) - 1
-          val end   = math.min(endLine, currentLines.size)
+          // both startLine and endLine are 0-indexed inclusive
+          val start = math.max(0, math.min(startLine, currentLines.size - 1))
+          val end   = math.max(start, math.min(endLine, currentLines.size - 1))
 
-          if (start >= currentLines.size || end < start) {
+          if (start > end) {
             throw new WorkspaceAgentException(
               s"Invalid line range: $startLine-$endLine for file with ${currentLines.size} lines",
               "INVALID_ARGUMENT",
@@ -382,27 +405,22 @@ class WorkspaceAgentInterfaceImpl(
           }
 
           val newLines = newContent.split("\n").toList
-          currentLines.take(start) ++ newLines ++ currentLines.drop(end)
+          // drop uses exclusive index, so end + 1
+          currentLines.take(start) ++ newLines ++ currentLines.drop(end + 1)
 
         case InsertOperation(_, afterLine, newContent) =>
-          val pos = math.min(afterLine, currentLines.size)
-
-          if (pos < 0) {
-            throw new WorkspaceAgentException(
-              s"Invalid line position: $afterLine",
-              "INVALID_ARGUMENT",
-              None
-            )
-          }
+          // afterLine is 0-indexed; insert occurs immediately after this line index
+          val pos = math.max(0, math.min(afterLine + 1, currentLines.size))
 
           val newLines = newContent.split("\n").toList
           currentLines.take(pos) ++ newLines ++ currentLines.drop(pos)
 
         case DeleteOperation(_, startLine, endLine) =>
-          val start = math.max(1, startLine) - 1
-          val end   = math.min(endLine, currentLines.size)
+          // 0-indexed inclusive boundaries
+          val start = math.max(0, math.min(startLine, currentLines.size - 1))
+          val end   = math.max(start, math.min(endLine, currentLines.size - 1))
 
-          if (start >= currentLines.size || end < start) {
+          if (start > end) {
             throw new WorkspaceAgentException(
               s"Invalid line range: $startLine-$endLine for file with ${currentLines.size} lines",
               "INVALID_ARGUMENT",
@@ -410,7 +428,7 @@ class WorkspaceAgentInterfaceImpl(
             )
           }
 
-          currentLines.take(start) ++ currentLines.drop(end)
+          currentLines.take(start) ++ currentLines.drop(end + 1)
 
         case RegexReplaceOperation(_, pattern, replacement, flags) =>
           val patternFlags = flags.getOrElse("")
@@ -522,7 +540,8 @@ class WorkspaceAgentInterfaceImpl(
             totalMatches += 1
 
             if (matches.size < defaultLimits.maxSearchResults) {
-              val lineNumber    = lineIndex + 1
+              // use 0-indexed line numbers for consistency with other tools
+              val lineNumber    = lineIndex
               val beforeContext = lines.slice(math.max(0, lineIndex - context), lineIndex)
               val afterContext  = lines.slice(lineIndex + 1, math.min(lines.size, lineIndex + context + 1))
 

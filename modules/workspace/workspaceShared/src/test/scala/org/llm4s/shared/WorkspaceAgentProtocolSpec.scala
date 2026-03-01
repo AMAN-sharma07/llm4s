@@ -97,6 +97,7 @@ class WorkspaceAgentProtocolSpec extends AnyFlatSpec with Matchers {
   // ============ ModifyFileCommand ============
 
   "ModifyFileCommand" should "serialize replace operation" in {
+    // note: operations use 0-indexed lines, but serialization tests don't care
     val cmd = ModifyFileCommand(
       commandId = "mod-1",
       path = "/src/file.txt",

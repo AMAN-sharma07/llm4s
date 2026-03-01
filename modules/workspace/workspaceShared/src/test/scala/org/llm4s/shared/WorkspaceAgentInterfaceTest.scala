@@ -74,7 +74,7 @@ class WorkspaceAgentInterfaceTest extends AnyFlatSpec with Matchers with OptionV
           matches = List(
             SearchMatch(
               path = "test.txt",
-              line = 1,
+              line = 0,
               matchText = "Line containing the matched content", // Example match text
               contextBefore = List(),
               contextAfter = List()

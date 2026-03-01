@@ -80,14 +80,14 @@ object WorkspaceTools {
         .withProperty(
           Schema.property(
             "start_line",
-            Schema.integer("Start line for reading (0-indexed)"),
+            Schema.integer("Start line for reading (0-indexed, inclusive)"),
             required = false
           )
         )
         .withProperty(
           Schema.property(
             "end_line",
-            Schema.integer("End line for reading (0-indexed)"),
+            Schema.integer("End line for reading (0-indexed, inclusive)")
             required = false
           )
         )
@@ -273,10 +273,10 @@ object WorkspaceTools {
         )
       )
       .withProperty(
-        Schema.property("start_line", Schema.integer("Start line for the operation (0-indexed)"))
+        Schema.property("start_line", Schema.integer("Start line for the operation (0-indexed, inclusive)"))
       )
       .withProperty(
-        Schema.property("end_line", Schema.integer("End line for the operation (0-indexed)"))
+        Schema.property("end_line", Schema.integer("End line for the operation (0-indexed, inclusive)"))
       )
       .withProperty(
         Schema.property(
@@ -438,6 +438,9 @@ object WorkspaceTools {
     params: SafeParameterExtractor,
     workspace: ContainerisedWorkspace
   ): Either[String, ujson.Value] = {
+    // note: the runner expects 0-indexed line numbers; this handler simply
+    // passes whatever integers are provided by the caller without adjustment.
+    // Schema descriptions have been updated accordingly.
     val path     = params.getString("path").fold(_ => "", identity)
     val opsParam = params.getArray("operations")
 

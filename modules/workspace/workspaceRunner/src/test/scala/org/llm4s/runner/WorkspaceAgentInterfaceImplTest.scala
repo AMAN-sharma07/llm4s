@@ -55,10 +55,20 @@ class WorkspaceAgentInterfaceImplTest extends AnyFlatSpec with Matchers with org
     response.metadata.path shouldBe "test1.txt"
     response.totalLines shouldBe 3
 
-    // Test with line range
-    val rangeResponse = interface.readFile("test1.txt", startLine = Some(2), endLine = Some(3))
+    // Test with line range (0-indexed: line 1 and 2)
+    val rangeResponse = interface.readFile("test1.txt", startLine = Some(1), endLine = Some(2))
     rangeResponse.content shouldBe "This is a test file.\nLine 3"
     rangeResponse.returnedLines shouldBe 2
+
+    // reading first line only using 0-index works too
+    val firstLine = interface.readFile("test1.txt", startLine = Some(0), endLine = Some(0))
+    firstLine.content shouldBe "Hello, world!"
+    firstLine.returnedLines shouldBe 1
+
+    // out-of-range parameters are clamped gracefully
+    val clamped = interface.readFile("test1.txt", startLine = Some(-5), endLine = Some(100))
+    clamped.content shouldBe "Hello, world!\nThis is a test file.\nLine 3"
+    clamped.returnedLines shouldBe 3
   }
 
   it should "write file content" in {
@@ -76,10 +86,10 @@ class WorkspaceAgentInterfaceImplTest extends AnyFlatSpec with Matchers with org
     // First create a file to modify
     interface.writeFile("modify-test.txt", "Line 1\nLine 2\nOld Line 3\nLine 4\nLine 5")
 
-    // Test replace operation
+    // Test replace operation (0-indexed: replace lines 1,2,3)
     val replaceOp = ReplaceOperation(
-      startLine = 2,
-      endLine = 4,
+      startLine = 1,
+      endLine = 3,
       newContent = "Modified Line 2\nModified Line 3"
     )
 
@@ -100,6 +110,14 @@ class WorkspaceAgentInterfaceImplTest extends AnyFlatSpec with Matchers with org
       "Line 5"
     ).mkString(lineSep) + lineSep
     content shouldBe expectedContent
+
+    // invalid ranges should throw meaningful exceptions
+    val badOp = ReplaceOperation(startLine = 3, endLine = 1, newContent = "oops")
+    an[WorkspaceAgentException] should be thrownBy interface.modifyFile("modify-test.txt", List(badOp))
+    
+    val badInsert = InsertOperation(afterLine = -5, newContent = "x")
+    // negative afterLine clamps to beginning; should not throw and act like insert at start
+    interface.modifyFile("modify-test.txt", List(badInsert))
   }
 
   it should "search files for content" in {
@@ -113,6 +131,8 @@ class WorkspaceAgentInterfaceImplTest extends AnyFlatSpec with Matchers with org
     response.matches should not be empty
     response.matches.exists(_.path == "test1.txt") shouldBe true
     response.matches.exists(_.path == "test2.txt") shouldBe true
+    // ensure line numbers are 0-indexed; first match should be at index 0
+    response.matches.head.line shouldBe 0
     // truncated should be false when number of hits is small
     response.isTruncated shouldBe false
   }

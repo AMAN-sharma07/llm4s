@@ -8,25 +8,68 @@ import com.anthropic.models.messages.{
   ThinkingConfigEnabled,
   Tool
 }
-import org.llm4s.llmconnect.LLMClient
+import org.llm4s.llmconnect.BaseLifecycleLLMClient
 import org.llm4s.llmconnect.config.{ AnthropicConfig, ProviderConfig }
 import org.llm4s.llmconnect.model._
 import org.llm4s.llmconnect.streaming._
 import org.llm4s.model.TransformationResult
 import org.llm4s.toolapi.{ ObjectSchema, ToolFunction }
 import org.llm4s.types.Result
-import org.llm4s.error.{ AuthenticationError, ConfigurationError, RateLimitError, ValidationError }
+import org.llm4s.error.{ AuthenticationError, RateLimitError, ValidationError }
 import org.llm4s.error.ThrowableOps._
 
-import java.util.Optional
-import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
+/**
+ * [[LLMClient]] implementation for Anthropic Claude models.
+ *
+ * Uses the official Anthropic Java SDK (`AnthropicOkHttpClient`) for all
+ * API calls. SDK exceptions are mapped to the appropriate [[org.llm4s.error.LLMError]]
+ * subtypes before being returned.
+ *
+ * == Message format adaptations ==
+ *
+ * The Anthropic Messages API differs from the OpenAI convention in several
+ * ways that this client handles transparently:
+ *
+ *  - **Default system prompt**: if the conversation contains no
+ *    `SystemMessage`, the client injects `"You are Claude, a helpful AI
+ *    assistant."` automatically. Supply an explicit `SystemMessage` to
+ *    override this.
+ *
+ *  - **Tool results as user messages**: the Anthropic API does not accept
+ *    native tool-result messages in the same turn structure as OpenAI.
+ *    `ToolMessage` values are therefore forwarded as user messages with
+ *    the prefix `"[Tool result for <toolCallId>]: "`.
+ *
+ *  - **Assistant messages with tool calls are skipped**: when an
+ *    `AssistantMessage` carries pending tool calls, it is not forwarded —
+ *    Anthropic infers the assistant turn from the subsequent tool-result
+ *    user messages.
+ *
+ *  - **Schema sanitisation**: OpenAI-specific fields (`strict`,
+ *    `additionalProperties`) are stripped from tool schemas before sending,
+ *    because Anthropic's API rejects them.
+ *
+ * == Extended thinking ==
+ *
+ * When `CompletionOptions.reasoning` is set, a `thinking` block is added
+ * to the request. The token budget is clamped to `[1024, maxTokens - 1]`
+ * to satisfy the Anthropic API constraint; the effective budget may
+ * therefore differ from what was requested.
+ *
+ * `maxTokens` defaults to 2048 when not set in `CompletionOptions` because
+ * the Anthropic API requires the field.
+ *
+ * @param config  `AnthropicConfig` carrying the API key, model name, and base URL.
+ * @param metrics Receives per-call latency and token-usage events.
+ *                Defaults to `MetricsCollector.noop`.
+ */
 class AnthropicClient(
   config: AnthropicConfig,
   protected val metrics: org.llm4s.metrics.MetricsCollector = org.llm4s.metrics.MetricsCollector.noop
-) extends LLMClient
+) extends BaseLifecycleLLMClient
     with MetricsRecording {
   // Store config for budget calculations
   private val providerConfig: ProviderConfig = config
@@ -38,7 +81,7 @@ class AnthropicClient(
     .baseUrl(config.baseUrl)
     .build()
 
-  private val closed: AtomicBoolean = new AtomicBoolean(false)
+  protected def clientDescription: String = s"Anthropic client for model ${config.model}"
 
   override def complete(
     conversation: Conversation,
@@ -67,7 +110,7 @@ class AnthropicClient(
           // Add extended thinking configuration if requested
           // Minimum budget is 1024 tokens, must be less than max_tokens
           transformed.options.effectiveBudgetTokens.foreach { budgetTokens =>
-            val effectiveBudget = math.max(1024, math.min(budgetTokens, maxTokens - 1))
+            val effectiveBudget = clampBudgetTokens(budgetTokens, maxTokens)
             paramsBuilder.thinking(
               ThinkingConfigEnabled.builder().budgetTokens(effectiveBudget.toLong).build()
             )
@@ -150,7 +193,7 @@ curl https://api.anthropic.com/v1/messages \
 
             // Add extended thinking configuration if requested
             transformed.options.effectiveBudgetTokens.foreach { budgetTokens =>
-              val effectiveBudget = math.max(1024, math.min(budgetTokens, maxTokens - 1))
+              val effectiveBudget = clampBudgetTokens(budgetTokens, maxTokens)
               paramsBuilder.thinking(
                 ThinkingConfigEnabled.builder().budgetTokens(effectiveBudget.toLong).build()
               )
@@ -174,7 +217,6 @@ curl https://api.anthropic.com/v1/messages \
               val streamResponse = messageService.createStreaming(messageParams)
 
               import scala.jdk.StreamConverters._
-              import scala.jdk.OptionConverters._
               val stream: Iterator[RawMessageStreamEvent] = streamResponse.stream().toScala(Iterator)
               val loopTry = Try {
                 stream.foreach { event =>
@@ -265,8 +307,11 @@ curl https://api.anthropic.com/v1/messages \
                     Try(msgDelta.usage()).foreach { usage =>
                       if (usage != null) {
                         val inputTokens = Option(usage.inputTokens()) match {
-                          case Some(opt: Optional[_]) => opt.toScala.map(_.toInt).getOrElse(0)
-                          case _                      => 0
+                          case Some(opt: java.util.Optional[_]) if opt.isPresent =>
+                            Option(opt.get())
+                              .collect { case n: java.lang.Number => n.intValue() }
+                              .getOrElse(0)
+                          case _ => 0
                         }
                         val outputTokens = Option(usage.outputTokens()).map(_.toInt).getOrElse(0)
                         if (inputTokens > 0 || outputTokens > 0) accumulator.updateTokens(inputTokens, outputTokens)
@@ -303,8 +348,22 @@ curl https://api.anthropic.com/v1/messages \
 
   override def getReserveCompletion(): Int = providerConfig.reserveCompletion
 
+  /**
+   * Clamps an extended-thinking budget to the range `[1024, maxTokens - 1]`.
+   *
+   * The Anthropic API requires `budgetTokens >= 1024` and `budgetTokens < maxTokens`.
+   * Values outside this range are silently adjusted; callers should prefer
+   * supplying valid budgets rather than relying on clamping.
+   *
+   * @param budgetTokens requested thinking-token budget; may be any non-negative value
+   * @param maxTokens    effective `max_tokens` for the request; determines the upper bound
+   * @return the clamped budget in `[1024, maxTokens - 1]`
+   */
+  private[provider] def clampBudgetTokens(budgetTokens: Int, maxTokens: Int): Int =
+    math.max(1024, math.min(budgetTokens, maxTokens - 1))
+
   // Add messages from conversation to the parameters builder
-  private def addMessagesToParams(
+  private[provider] def addMessagesToParams(
     conversation: Conversation,
     paramsBuilder: MessageCreateParams.Builder
   ): Unit = {
@@ -424,15 +483,22 @@ curl https://api.anthropic.com/v1/messages \
 
     // Extract token usage, including thinking tokens if available
     val usage = response.usage()
-    val baseTokenUsage = TokenUsage(
+
+    val cachedTokens: Option[Int] =
+      Option(usage.cacheReadInputTokens())
+        .flatMap(opt => if (opt.isPresent) Some(opt.get().toInt) else None)
+
+    val cacheCreationTokens: Option[Int] =
+      Option(usage.cacheCreationInputTokens())
+        .flatMap(opt => if (opt.isPresent) Some(opt.get().toInt) else None)
+
+    val tokenUsage = TokenUsage(
       promptTokens = usage.inputTokens().toInt,
       completionTokens = usage.outputTokens().toInt,
-      totalTokens = (usage.inputTokens() + usage.outputTokens()).toInt
+      totalTokens = (usage.inputTokens() + usage.outputTokens()).toInt,
+      cachedTokens = cachedTokens,
+      cacheCreationTokens = cacheCreationTokens
     )
-
-    // Check for thinking tokens in cache usage (Anthropic reports cache_read_input_tokens for thinking)
-    // Note: The SDK may expose thinking tokens differently - adjust as needed
-    val tokenUsage = baseTokenUsage
 
     // Estimate cost using CostEstimator
     val cost = CostEstimator.estimate(config.model, tokenUsage)
@@ -470,22 +536,23 @@ curl https://api.anthropic.com/v1/messages \
     toolCalls
   }
 
-  override def close(): Unit =
-    if (closed.compareAndSet(false, true)) {
-      client.close()
-    }
-
-  private def validateNotClosed: Result[Unit] =
-    if (closed.get()) {
-      Left(ConfigurationError(s"Anthropic client for model ${config.model} is already closed"))
-    } else {
-      Right(())
-    }
+  override protected def releaseResources(): Unit =
+    client.close()
 }
 
 object AnthropicClient {
   import org.llm4s.types.TryOps
 
+  /**
+   * Constructs an [[AnthropicClient]], wrapping any construction-time
+   * exception in a `Left`.
+   *
+   * @param config  `AnthropicConfig` with API key, model, and base URL.
+   * @param metrics Receives per-call latency and token-usage events.
+   *                Defaults to `MetricsCollector.noop`.
+   * @return `Right(client)` on success; `Left(LLMError)` if the underlying
+   *         SDK client cannot be initialised.
+   */
   def apply(
     config: AnthropicConfig,
     metrics: org.llm4s.metrics.MetricsCollector = org.llm4s.metrics.MetricsCollector.noop

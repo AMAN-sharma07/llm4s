@@ -155,7 +155,12 @@ object AgentState {
       case (None, Some(maxMessages)) =>
         messages.length > maxMessages
       case (None, None) =>
-        false
+        // When no explicit limits are set, AdaptiveWindowing computes its own limit
+        config.pruningStrategy match {
+          case adaptive: PruningStrategy.AdaptiveWindowing =>
+            messages.map(tokenCounter).sum > adaptive.calculateOptimalWindow
+          case _ => false
+        }
     }
 
     if (!needsPruning) {
@@ -170,6 +175,8 @@ object AgentState {
           pruneRecentTurnsOnly(messages, turns, config)
         case PruningStrategy.Custom(fn) =>
           fn(messages)
+        case adaptive: PruningStrategy.AdaptiveWindowing =>
+          pruneWithAdaptiveWindowing(messages, adaptive, config, tokenCounter)
       }
 
       state.copy(conversation = Conversation(prunedMessages))
@@ -269,6 +276,43 @@ object AgentState {
       systemMsgs ++ otherMsgs.drop(keepFromIndex)
     } else {
       otherMsgs.drop(keepFromIndex)
+    }
+  }
+
+  /**
+   * Prune using adaptive windowing strategy.
+   * Automatically calculates optimal window size based on model context and pricing.
+   */
+  private def pruneWithAdaptiveWindowing(
+    messages: Seq[Message],
+    strategy: PruningStrategy.AdaptiveWindowing,
+    config: ContextWindowConfig,
+    tokenCounter: Message => Int
+  ): Seq[Message] = {
+    // Calculate optimal window using adaptive strategy
+    val optimalTokens = strategy.calculateOptimalWindow
+
+    // Create a modified config with calculated token limit and preserve other settings
+    val adaptiveConfig = config.copy(
+      maxTokens = Some(optimalTokens),
+      maxMessages = None // Use token-based limit, not message count
+    )
+
+    // Apply OldestFirst strategy with the calculated window
+    val pruned = pruneOldestFirst(messages, adaptiveConfig, tokenCounter)
+
+    // Enforce strategy.preserveMinTurns as a floor: always keep at least that
+    // many recent turns (user+assistant pairs) regardless of the token limit.
+    val (systemMsgs, otherMsgs) = messages.partition(_.role == MessageRole.System)
+    val minOtherCount           = math.min(strategy.preserveMinTurns * 2, otherMsgs.length)
+    val prunedOtherCount        = pruned.count(_.role != MessageRole.System)
+
+    if (prunedOtherCount >= minOtherCount) {
+      pruned
+    } else if (config.preserveSystemMessage) {
+      systemMsgs ++ otherMsgs.takeRight(minOtherCount)
+    } else {
+      messages.takeRight(minOtherCount)
     }
   }
 

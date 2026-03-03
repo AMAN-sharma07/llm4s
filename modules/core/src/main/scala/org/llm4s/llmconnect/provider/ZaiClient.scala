@@ -1,13 +1,13 @@
 package org.llm4s.llmconnect.provider
 
 import org.llm4s.util.Redaction
-import org.llm4s.llmconnect.LLMClient
+import org.llm4s.llmconnect.BaseLifecycleLLMClient
 import org.llm4s.llmconnect.config.ZaiConfig
 import org.llm4s.llmconnect.model._
 import org.llm4s.llmconnect.streaming.{ SSEParser, StreamingAccumulator, StreamingToolArgumentParser }
 import org.llm4s.toolapi.ToolRegistry
 import org.llm4s.types.Result
-import org.llm4s.error.{ AuthenticationError, ConfigurationError, RateLimitError, ServiceError }
+import org.llm4s.error.{ AuthenticationError, RateLimitError, ServiceError }
 import org.llm4s.error.ThrowableOps._
 
 import java.net.URI
@@ -15,17 +15,33 @@ import java.net.http.{ HttpClient, HttpRequest, HttpResponse }
 import java.time.Duration
 import java.io.{ BufferedReader, InputStreamReader }
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.atomic.AtomicBoolean
 import scala.util.Try
 
+/**
+ * LLM client for the Z.ai API.
+ *
+ * Z.ai uses an OpenAI-compatible `/chat/completions` endpoint with one important
+ * difference: message content is always an array of typed objects
+ * (`[{"type":"text","text":"..."}]`) rather than a plain string.  This applies
+ * to user, system, assistant, and tool messages alike.  Sending a plain string
+ * causes a rejection from the Z.ai API.
+ *
+ * Both non-streaming (`complete`) and streaming (`streamComplete`) are supported.
+ * Tool calling follows the standard OpenAI function-calling format.
+ *
+ * @param config  Z.ai connection configuration (API key, model, base URL, context window)
+ * @param metrics records per-call latency and token-usage events;
+ *                use [[org.llm4s.metrics.MetricsCollector.noop]] when metrics are not needed
+ */
 class ZaiClient(
   config: ZaiConfig,
   protected val metrics: org.llm4s.metrics.MetricsCollector = org.llm4s.metrics.MetricsCollector.noop
-) extends LLMClient
+) extends BaseLifecycleLLMClient
     with MetricsRecording {
-  private val httpClient            = HttpClient.newHttpClient()
-  private val logger                = org.slf4j.LoggerFactory.getLogger(getClass)
-  private val closed: AtomicBoolean = new AtomicBoolean(false)
+  private val httpClient = HttpClient.newHttpClient()
+  private val logger     = org.slf4j.LoggerFactory.getLogger(getClass)
+
+  protected def clientDescription: String = s"Z.ai client for model ${config.model}"
 
   override def complete(
     conversation: Conversation,
@@ -345,19 +361,10 @@ class ZaiClient(
 
   override def getReserveCompletion(): Int = config.reserveCompletion
 
-  override def close(): Unit =
-    if (closed.compareAndSet(false, true)) {
-      (httpClient: Any) match {
-        case c: AutoCloseable => c.close()
-        case _                => ()
-      }
-    }
-
-  private def validateNotClosed: Result[Unit] =
-    if (closed.get()) {
-      Left(ConfigurationError(s"Z.ai client for model ${config.model} is already closed"))
-    } else {
-      Right(())
+  override protected def releaseResources(): Unit =
+    (httpClient: Any) match {
+      case c: AutoCloseable => c.close()
+      case _                => ()
     }
 }
 

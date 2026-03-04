@@ -320,14 +320,16 @@ final case class RAGConfig(
    * IMPORTANT: When a PgSearchIndex is provided, this method automatically
    * configures the underlying pgVector storage settings so that both
    * regular ingest methods and permission-aware methods use the same
-   * PostgreSQL database.
+   * PostgreSQL database. Additionally, it enables full PostgreSQL hybrid
+   * search (vectors + keyword FTS) by setting pgKeywordTableName.
    *
    * @param index The SearchIndex instance (e.g., PgSearchIndex)
    */
   def withSearchIndex(index: SearchIndex): RAGConfig = {
     // If the SearchIndex is PostgreSQL-backed, automatically configure
-    // the pgVector settings to ensure regular ingest/query methods also
-    // use the same PostgreSQL database for vector storage.
+    // the pgVector settings (vectors + keyword table) to ensure regular
+    // ingest/query methods also use the same PostgreSQL database for
+    // both vector and keyword search.
     val baseConfig = copy(searchIndex = Some(index))
 
     index.pgConfig match {
@@ -336,7 +338,8 @@ final case class RAGConfig(
           pgVectorConnectionString = Some(pgCfg.jdbcUrl),
           pgVectorUser = Some(pgCfg.user),
           pgVectorPassword = Some(pgCfg.password),
-          pgVectorTableName = Some(pgCfg.vectorTableName)
+          pgVectorTableName = Some(pgCfg.vectorTableName),
+          pgKeywordTableName = Some(pgCfg.keywordTableName)
         )
       case None =>
         baseConfig

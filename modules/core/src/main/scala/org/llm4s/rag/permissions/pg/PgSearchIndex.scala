@@ -457,7 +457,8 @@ object PgSearchIndex {
     jdbcUrl: String,
     user: String,
     password: String,
-    vectorTableName: String = "vectors"
+    vectorTableName: String = "vectors",
+    keywordTableName: String = "documents"
   ): Result[PgSearchIndex] = {
     // Parse JDBC URL to extract host, port, database
     val pattern = """jdbc:postgresql://([^:/]+):?(\d+)?/(.+)""".r
@@ -471,7 +472,8 @@ object PgSearchIndex {
             database = database,
             user = user,
             password = password,
-            vectorTableName = vectorTableName
+            vectorTableName = vectorTableName,
+            keywordTableName = keywordTableName
           )
         )
       case _ =>
